@@ -71,36 +71,63 @@ class ConversationService:
         self.by_date: dict[str, list[Conversation]] = defaultdict(list)
         self.by_id: dict[str, Conversation] = {}
         self.search_index: Optional[minsearch.Index] = None
-        self._load_data(data_path)
+        self.data_files = self._resolve_data_files(data_path)
+        self._load_data()
         self._load_or_create_index(data_path)
 
-    def _load_data(self, data_path: str):
-        print(f"Loading conversations from {data_path}...")
-        with open(data_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    def _resolve_data_files(self, data_path: str) -> list[Path]:
+        p = Path(data_path)
+        if p.is_file():
+            return [p]
+        if p.is_dir():
+            files = sorted(p.glob("conversations*.json"))
+            if not files:
+                raise FileNotFoundError(
+                    f"No conversations*.json files found in {p}"
+                )
+            return files
+        raise FileNotFoundError(f"Data path not found: {data_path}")
 
-        for conv in data:
-            create_time = conv.get("create_time")
-            if create_time is None:
-                continue
+    def _load_data(self):
+        duplicates = 0
+        for file_path in self.data_files:
+            print(f"Loading conversations from {file_path}...")
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-            c = Conversation(
-                id=conv.get("id", conv.get("conversation_id", "")),
-                title=conv.get("title", ""),
-                create_time=create_time,
-                update_time=conv.get("update_time", create_time),
-                model=conv.get("default_model_slug"),
-                mapping=conv.get("mapping", {}),
-                is_archived=conv.get("is_archived", False),
-            )
-            self.conversations.append(c)
-            self.by_id[c.id] = c
+            file_count = 0
+            for conv in data:
+                create_time = conv.get("create_time")
+                if create_time is None:
+                    continue
 
-            dt = datetime.fromtimestamp(create_time, tz=timezone.utc)
-            date_key = dt.strftime("%Y-%m-%d")
-            self.by_date[date_key].append(c)
+                conv_id = conv.get("id", conv.get("conversation_id", ""))
+                if conv_id in self.by_id:
+                    duplicates += 1
+                    continue
 
-        print(f"Loaded {len(self.conversations)} conversations")
+                c = Conversation(
+                    id=conv_id,
+                    title=conv.get("title", ""),
+                    create_time=create_time,
+                    update_time=conv.get("update_time", create_time),
+                    model=conv.get("default_model_slug"),
+                    mapping=conv.get("mapping", {}),
+                    is_archived=conv.get("is_archived", False),
+                )
+                self.conversations.append(c)
+                self.by_id[c.id] = c
+
+                dt = datetime.fromtimestamp(create_time, tz=timezone.utc)
+                date_key = dt.strftime("%Y-%m-%d")
+                self.by_date[date_key].append(c)
+                file_count += 1
+
+            print(f"  Loaded {file_count} conversations from {file_path.name}")
+
+        if duplicates:
+            print(f"  Skipped {duplicates} duplicate conversations")
+        print(f"Total: {len(self.conversations)} conversations loaded")
 
     def get_stats(self) -> StatsResponse:
         if not self.conversations:
@@ -251,14 +278,23 @@ class ConversationService:
         messages.sort(key=lambda m: m["createTime"] or 0)
         return messages
 
-    def _get_index_path(self, data_path: str) -> str:
-        return data_path + ".index"
+    def _get_index_path(self, data_path: str) -> Path:
+        p = Path(data_path)
+        if p.is_dir():
+            return p / "conversations.index"
+        return Path(data_path + ".index")
+
+    def _index_is_stale(self, index_path: Path) -> bool:
+        if not index_path.exists():
+            return True
+        index_mtime = index_path.stat().st_mtime
+        return any(f.stat().st_mtime > index_mtime for f in self.data_files)
 
     def _load_or_create_index(self, data_path: str):
         index_path = self._get_index_path(data_path)
 
-        # Try to load existing index
-        if os.path.exists(index_path):
+        # Try to load existing index if not stale
+        if not self._index_is_stale(index_path):
             try:
                 with open(index_path, "rb") as f:
                     self.search_index = pickle.load(f)
@@ -295,11 +331,10 @@ class ConversationService:
             })
 
         self.search_index.fit(documents)
-        self._save_index(data_path)
+        self._save_index(index_path)
         print(f"Search index built with {len(documents)} documents")
 
-    def _save_index(self, data_path: str):
-        index_path = self._get_index_path(data_path)
+    def _save_index(self, index_path: Path):
         with open(index_path, "wb") as f:
             pickle.dump(self.search_index, f)
         print(f"Saved search index to {index_path}")
@@ -359,5 +394,5 @@ def create_app(data_path: str) -> FastAPI:
 
 
 # Create app instance for uvicorn
-data_path = os.environ.get("CONVERSATIONS_DATA_PATH", "../data/conversations.json")
+data_path = os.environ.get("CONVERSATIONS_DATA_PATH", "../data")
 app = create_app(data_path)

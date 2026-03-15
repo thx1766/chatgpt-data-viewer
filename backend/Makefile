@@ -1,6 +1,6 @@
 .PHONY: dev run build-frontend
 
-data = ../data/conversations.json
+data = ../data
 port = 8080
 
 dev:
