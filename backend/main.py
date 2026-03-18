@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 import minsearch
+import threading
 
 
 # --- Data Models ---
@@ -59,11 +60,64 @@ class ConversationDetailResponse(BaseModel):
     messages: list[dict]
     isArchived: bool
     sourceFile: str = ""
+    userTag: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
     query: str
     results: list[dict]
+
+
+class UserTagRequest(BaseModel):
+    user: str
+
+
+# --- User Tags Service ---
+
+class UserTagService:
+    def __init__(self, data_path: str):
+        p = Path(data_path)
+        if p.is_dir():
+            self.tags_file = p / "user_tags.json"
+        else:
+            self.tags_file = p.parent / "user_tags.json"
+        self._lock = threading.Lock()
+        self.tags: dict[str, str] = {}  # conversation_id -> user name
+        self._load()
+
+    def _load(self):
+        if self.tags_file.exists():
+            with open(self.tags_file, "r", encoding="utf-8") as f:
+                self.tags = json.load(f)
+            print(f"Loaded {len(self.tags)} user tags from {self.tags_file}")
+
+    def _save(self):
+        with open(self.tags_file, "w", encoding="utf-8") as f:
+            json.dump(self.tags, f, indent=2)
+
+    def get_tag(self, conv_id: str) -> Optional[str]:
+        return self.tags.get(conv_id)
+
+    def set_tag(self, conv_id: str, user: str):
+        with self._lock:
+            self.tags[conv_id] = user
+            self._save()
+
+    def remove_tag(self, conv_id: str):
+        with self._lock:
+            self.tags.pop(conv_id, None)
+            self._save()
+
+    def get_all_tags(self) -> dict[str, str]:
+        return dict(self.tags)
+
+    def get_users(self) -> list[str]:
+        return sorted(set(self.tags.values()))
+
+    def set_tags_bulk(self, tags: dict[str, str]):
+        with self._lock:
+            self.tags.update(tags)
+            self._save()
 
 
 # --- Service ---
@@ -172,9 +226,8 @@ class ConversationService:
             topModels=top_models,
         )
 
-    def get_contribution(self, year: int) -> ContributionResponse:
+    def get_contribution(self, year: int, user_filter: Optional[str] = None, user_tags: Optional[dict[str, str]] = None) -> ContributionResponse:
         import calendar
-        from datetime import timedelta
 
         # Get all dates in the year
         all_days = {}
@@ -184,11 +237,16 @@ class ConversationService:
                 date_key = f"{year}-{month:02d}-{day:02d}"
                 all_days[date_key] = 0
 
-        # Fill in actual counts
+        # Fill in actual counts, optionally filtered by user
+        tags = user_tags or {}
         for date_key, convs in self.by_date.items():
             dt = datetime.fromisoformat(date_key)
             if dt.year == year:
-                all_days[date_key] = len(convs)
+                if user_filter:
+                    count = sum(1 for c in convs if tags.get(c.id) == user_filter)
+                else:
+                    count = len(convs)
+                all_days[date_key] = count
 
         # Convert to list of dicts
         days = [{"date": k, "count": v} for k, v in all_days.items()]
@@ -199,10 +257,11 @@ class ConversationService:
 
         return ContributionResponse(year=year, days=days, max=max_count, total=total)
 
-    def get_conversations_by_date(self, date: str) -> ConversationsListResponse:
+    def get_conversations_by_date(self, date: str, user_tags: Optional[dict[str, str]] = None) -> ConversationsListResponse:
         convs = self.by_date.get(date, [])
         convs_sorted = sorted(convs, key=lambda c: -c.create_time)
 
+        tags = user_tags or {}
         conversations = [
             {
                 "id": c.id,
@@ -212,13 +271,14 @@ class ConversationService:
                 ).isoformat(),
                 "model": c.model,
                 "messageCount": sum(1 for n in c.mapping.values() if n.get("message")),
+                "userTag": tags.get(c.id),
             }
             for c in convs_sorted
         ]
 
         return ConversationsListResponse(date=date, conversations=conversations)
 
-    def get_conversation(self, conv_id: str) -> Optional[ConversationDetailResponse]:
+    def get_conversation(self, conv_id: str, user_tag: Optional[str] = None) -> Optional[ConversationDetailResponse]:
         c = self.by_id.get(conv_id)
         if not c:
             return None
@@ -234,6 +294,7 @@ class ConversationService:
             messages=messages,
             isArchived=c.is_archived,
             sourceFile=c.source_file,
+            userTag=user_tag,
         )
 
     def _linearize_messages(self, mapping: dict) -> list[dict]:
@@ -365,11 +426,13 @@ class ConversationService:
 # --- FastAPI App ---
 
 service: ConversationService
+tag_service: UserTagService
 
 
 def create_app(data_path: str) -> FastAPI:
-    global service
+    global service, tag_service
     service = ConversationService(data_path)
+    tag_service = UserTagService(data_path)
 
     app = FastAPI(title="ChatGPT Data Viewer API")
 
@@ -378,16 +441,17 @@ def create_app(data_path: str) -> FastAPI:
         return service.get_stats()
 
     @app.get("/api/contribution")
-    def get_contribution(year: int = 2025) -> ContributionResponse:
-        return service.get_contribution(year)
+    def get_contribution(year: int = 2025, user: Optional[str] = None) -> ContributionResponse:
+        tags = tag_service.get_all_tags() if user else None
+        return service.get_contribution(year, user_filter=user, user_tags=tags)
 
     @app.get("/api/conversations")
     def get_conversations(date: str) -> ConversationsListResponse:
-        return service.get_conversations_by_date(date)
+        return service.get_conversations_by_date(date, user_tags=tag_service.get_all_tags())
 
     @app.get("/api/conversation/{conv_id}")
     def get_conversation(conv_id: str) -> ConversationDetailResponse | dict:
-        result = service.get_conversation(conv_id)
+        result = service.get_conversation(conv_id, user_tag=tag_service.get_tag(conv_id))
         if not result:
             return {"error": "not found"}
         return result
@@ -402,7 +466,30 @@ def create_app(data_path: str) -> FastAPI:
     @app.get("/api/search")
     def search(q: str, limit: int = 20) -> SearchResponse:
         results = service.search(q, limit)
+        tags = tag_service.get_all_tags()
+        for r in results:
+            r["userTag"] = tags.get(r["id"])
         return SearchResponse(query=q, results=results)
+
+    @app.get("/api/users")
+    def get_users() -> list[str]:
+        return tag_service.get_users()
+
+    @app.get("/api/user-tags")
+    def get_user_tags() -> dict[str, str]:
+        return tag_service.get_all_tags()
+
+    @app.put("/api/conversation/{conv_id}/user-tag")
+    def set_user_tag(conv_id: str, body: UserTagRequest) -> dict:
+        if conv_id not in service.by_id:
+            return {"error": "conversation not found"}
+        tag_service.set_tag(conv_id, body.user)
+        return {"ok": True, "user": body.user}
+
+    @app.delete("/api/conversation/{conv_id}/user-tag")
+    def remove_user_tag(conv_id: str) -> dict:
+        tag_service.remove_tag(conv_id)
+        return {"ok": True}
 
     # Serve frontend static files
     frontend_path = Path(__file__).parent.parent / "frontend" / "dist"

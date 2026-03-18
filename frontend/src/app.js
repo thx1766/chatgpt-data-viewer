@@ -21,6 +21,8 @@ const state = {
   searchResults: [],
   isSearching: false,
   tooltipLocked: false, // Prevent tooltip from showing after click
+  users: [],           // Available user tags
+  selectedUser: null,  // Filter by user (null = all)
 };
 
 // DOM Elements
@@ -38,8 +40,12 @@ export async function init() {
 // Load data from API
 async function loadData() {
   try {
-    const stats = await fetchJSON(`${API_BASE}/stats`);
+    const [stats, users] = await Promise.all([
+      fetchJSON(`${API_BASE}/stats`),
+      fetchJSON(`${API_BASE}/users`),
+    ]);
     state.stats = stats;
+    state.users = users;
 
     // Determine available years from date range
     const startYear = new Date(stats.dateRange.start).getFullYear();
@@ -67,7 +73,11 @@ async function loadData() {
 
 async function loadContribution(year) {
   try {
-    const data = await fetchJSON(`${API_BASE}/contribution?year=${year}`);
+    let url = `${API_BASE}/contribution?year=${year}`;
+    if (state.selectedUser) {
+      url += `&user=${encodeURIComponent(state.selectedUser)}`;
+    }
+    const data = await fetchJSON(url);
     state.allContributions[year] = data;
   } catch (err) {
     console.error('Failed to load contribution:', err);
@@ -118,6 +128,14 @@ function render() {
           <button class="${state.selectedYear === y ? 'active' : ''}"
                   onclick="window.selectYear(${y})">${y}</button>
         `).join('')}
+      </div>
+      <div class="user-filter">
+        <select id="userFilter" onchange="window.filterByUser(this.value)">
+          <option value="">All users</option>
+          ${state.users.map(u => `
+            <option value="${escapeHtml(u)}" ${state.selectedUser === u ? 'selected' : ''}>${escapeHtml(u)}</option>
+          `).join('')}
+        </select>
       </div>
       <a href="https://github.com/alexeygrigorev/chatgpt-data-viewer" target="_blank" class="github-link">
         <i class="fab fa-github"></i>
@@ -411,6 +429,7 @@ function renderConversationList() {
       <div class="conversation-meta">
         <span>${c.model || 'unknown'}</span>
         <span>${c.messageCount} messages</span>
+        ${c.userTag ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(c.userTag)}</span>` : ''}
       </div>
     </div>
   `).join('');
@@ -451,6 +470,21 @@ function renderConversationDetail() {
           Created: ${formatDateTime(c.createTime)}
         </div>
         ${c.sourceFile ? `<div class="detail-source-file"><i class="fas fa-file-code"></i> ${escapeHtml(c.sourceFile)}</div>` : ''}
+        <div class="detail-user-tag">
+          <i class="fas fa-user"></i>
+          <input type="text" class="user-tag-input"
+                 id="userTagInput"
+                 placeholder="Assign user..."
+                 value="${escapeHtml(c.userTag || '')}"
+                 list="userSuggestions"
+                 onkeydown="if(event.key === 'Enter') window.setUserTag('${c.id}', this.value)"
+                 onblur="window.setUserTag('${c.id}', this.value)"
+          />
+          <datalist id="userSuggestions">
+            ${state.users.map(u => `<option value="${escapeHtml(u)}">`).join('')}
+          </datalist>
+          ${c.userTag ? `<button class="user-tag-remove" onclick="window.removeUserTag('${c.id}')" title="Remove user tag">&times;</button>` : ''}
+        </div>
         <div class="detail-actions">
           <a class="action-link" onclick="window.viewRawJson('${c.id}')" title="View raw JSON">
             <i class="fas fa-code"></i>
@@ -498,6 +532,7 @@ function renderSearchResults() {
       <div class="conversation-meta">
         <span>${r.model || 'unknown'}</span>
         <span>${new Date(r.createTime).toISOString().slice(0, 10)}</span>
+        ${r.userTag ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(r.userTag)}</span>` : ''}
       </div>
     </div>
   `).join('');
@@ -596,6 +631,81 @@ window.clearSearch = () => {
   state.searchResults = [];
   state.selectedConversation = null;
   render();
+};
+
+window.filterByUser = async (user) => {
+  state.selectedUser = user || null;
+  state.allContributions = {};
+  state.selectedDate = null;
+  state.conversations = [];
+  state.selectedConversation = null;
+  state.searchQuery = '';
+  state.searchResults = [];
+
+  const currentYear = new Date().getFullYear();
+  await Promise.all([
+    loadContribution(currentYear),
+    loadContribution(currentYear - 1),
+    ...(state.selectedYear !== null && state.selectedYear !== currentYear && state.selectedYear !== currentYear - 1
+      ? [loadContribution(state.selectedYear)]
+      : [])
+  ]);
+
+  state.contribution = state.selectedYear !== null
+    ? state.allContributions[state.selectedYear]
+    : state.allContributions[currentYear];
+  render();
+};
+
+window.setUserTag = async (convId, value) => {
+  const user = value.trim();
+  const current = state.selectedConversation?.userTag || '';
+  if (user === current) return;
+
+  try {
+    if (user) {
+      await fetch(`${API_BASE}/conversation/${convId}/user-tag`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user }),
+      });
+      if (state.selectedConversation && state.selectedConversation.id === convId) {
+        state.selectedConversation.userTag = user;
+      }
+    } else {
+      await fetch(`${API_BASE}/conversation/${convId}/user-tag`, { method: 'DELETE' });
+      if (state.selectedConversation && state.selectedConversation.id === convId) {
+        state.selectedConversation.userTag = null;
+      }
+    }
+    // Update user tag in conversation list too
+    const conv = state.conversations.find(c => c.id === convId);
+    if (conv) conv.userTag = user || null;
+
+    // Refresh users list
+    const users = await fetchJSON(`${API_BASE}/users`);
+    state.users = users;
+    render();
+  } catch (err) {
+    console.error('Failed to set user tag:', err);
+  }
+};
+
+window.removeUserTag = async (convId) => {
+  try {
+    await fetch(`${API_BASE}/conversation/${convId}/user-tag`, { method: 'DELETE' });
+    if (state.selectedConversation && state.selectedConversation.id === convId) {
+      state.selectedConversation.userTag = null;
+    }
+    const conv = state.conversations.find(c => c.id === convId);
+    if (conv) conv.userTag = null;
+
+    const users = await fetchJSON(`${API_BASE}/users`);
+    state.users = users;
+    render();
+  } catch (err) {
+    console.error('Failed to remove user tag:', err);
+  }
 };
 
 window.downloadConversation = () => {
