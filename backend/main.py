@@ -27,6 +27,8 @@ class Conversation:
     model: Optional[str]
     mapping: dict
     is_archived: bool = False
+    source_file: str = ""
+    raw_data: Optional[dict] = None
 
 
 class StatsResponse(BaseModel):
@@ -56,6 +58,7 @@ class ConversationDetailResponse(BaseModel):
     model: Optional[str]
     messages: list[dict]
     isArchived: bool
+    sourceFile: str = ""
 
 
 class SearchResponse(BaseModel):
@@ -114,6 +117,8 @@ class ConversationService:
                     model=conv.get("default_model_slug"),
                     mapping=conv.get("mapping", {}),
                     is_archived=conv.get("is_archived", False),
+                    source_file=file_path.name,
+                    raw_data=conv,
                 )
                 self.conversations.append(c)
                 self.by_id[c.id] = c
@@ -228,6 +233,7 @@ class ConversationService:
             model=c.model,
             messages=messages,
             isArchived=c.is_archived,
+            sourceFile=c.source_file,
         )
 
     def _linearize_messages(self, mapping: dict) -> list[dict]:
@@ -339,6 +345,12 @@ class ConversationService:
             pickle.dump(self.search_index, f)
         print(f"Saved search index to {index_path}")
 
+    def get_raw_conversation(self, conv_id: str) -> Optional[dict]:
+        c = self.by_id.get(conv_id)
+        if not c:
+            return None
+        return c.raw_data
+
     def search(self, query: str, limit: int = 20) -> list[dict]:
         if not self.search_index:
             return []
@@ -376,6 +388,13 @@ def create_app(data_path: str) -> FastAPI:
     @app.get("/api/conversation/{conv_id}")
     def get_conversation(conv_id: str) -> ConversationDetailResponse | dict:
         result = service.get_conversation(conv_id)
+        if not result:
+            return {"error": "not found"}
+        return result
+
+    @app.get("/api/conversation/{conv_id}/raw")
+    def get_raw_conversation(conv_id: str) -> dict:
+        result = service.get_raw_conversation(conv_id)
         if not result:
             return {"error": "not found"}
         return result
