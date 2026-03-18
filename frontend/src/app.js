@@ -168,6 +168,21 @@ function render() {
       ${state.searchQuery ? renderSearchResults() : renderConversationList()}
       ${renderConversationDetail()}
     </div>
+
+    <div id="jsonModal" class="modal-overlay" style="display:none" onclick="window.closeJsonModal(event)">
+      <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <span class="modal-title">Raw JSON</span>
+          <div class="modal-header-actions">
+            <button class="modal-btn" onclick="window.toggleAllJsonSections()" title="Expand/Collapse all"><i class="fas fa-compress-alt"></i></button>
+            <button class="modal-close" onclick="window.closeJsonModal()">&times;</button>
+          </div>
+        </div>
+        <div class="modal-body" id="jsonModalBody">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -435,9 +450,15 @@ function renderConversationDetail() {
           ${c.model ? `Model: ${c.model} • ` : ''}
           Created: ${formatDateTime(c.createTime)}
         </div>
-        <a class="save-link" onclick="window.downloadConversation()">
-          <i class="fas fa-save"></i>
-        </a>
+        ${c.sourceFile ? `<div class="detail-source-file"><i class="fas fa-file-code"></i> ${escapeHtml(c.sourceFile)}</div>` : ''}
+        <div class="detail-actions">
+          <a class="action-link" onclick="window.viewRawJson('${c.id}')" title="View raw JSON">
+            <i class="fas fa-code"></i>
+          </a>
+          <a class="action-link" onclick="window.downloadConversation()" title="Download as Markdown">
+            <i class="fas fa-save"></i>
+          </a>
+        </div>
       </div>
       <div class="messages">${messages}<div class="messages-spacer"></div></div>
     </div>
@@ -608,6 +629,106 @@ window.downloadConversation = () => {
   URL.revokeObjectURL(url);
 };
 
+window.viewRawJson = async (id) => {
+  const modal = document.getElementById('jsonModal');
+  const body = document.getElementById('jsonModalBody');
+  if (!modal || !body) return;
+
+  modal.style.display = 'flex';
+  body.innerHTML = '<div class="loading">Loading...</div>';
+
+  try {
+    const raw = await fetchJSON(`${API_BASE}/conversation/${id}/raw`);
+    body.innerHTML = renderCollapsibleJson(raw, '', true);
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state" style="color: #f85149;">Failed to load raw JSON</div>`;
+  }
+};
+
+window.closeJsonModal = (event) => {
+  if (event && event.target !== event.currentTarget && event.currentTarget.id === 'jsonModal') return;
+  const modal = document.getElementById('jsonModal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.toggleJsonSection = (btn) => {
+  const section = btn.closest('.json-section');
+  if (section) section.classList.toggle('collapsed');
+};
+
+window.toggleAllJsonSections = () => {
+  const body = document.getElementById('jsonModalBody');
+  if (!body) return;
+  const sections = body.querySelectorAll('.json-section');
+  const allCollapsed = Array.from(sections).every(s => s.classList.contains('collapsed'));
+  sections.forEach(s => {
+    if (allCollapsed) {
+      s.classList.remove('collapsed');
+    } else {
+      s.classList.add('collapsed');
+    }
+  });
+};
+
+function renderCollapsibleJson(obj, key, isRoot) {
+  if (obj === null) return `<span class="json-null">null</span>`;
+  if (typeof obj === 'boolean') return `<span class="json-bool">${obj}</span>`;
+  if (typeof obj === 'number') return `<span class="json-num">${obj}</span>`;
+  if (typeof obj === 'string') {
+    const escaped = escapeHtml(obj);
+    if (escaped.length > 200) {
+      return `<span class="json-str">"${escaped.slice(0, 200)}..."</span>
+              <span class="json-str json-str-full" style="display:none">"${escaped}"</span>
+              <button class="json-expand-str" onclick="this.previousElementSibling.style.display='inline';this.previousElementSibling.previousElementSibling.style.display='none';this.remove()">show full</button>`;
+    }
+    return `<span class="json-str">"${escaped}"</span>`;
+  }
+
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return `<span class="json-bracket">[]</span>`;
+    const items = obj.map((item, i) => {
+      const val = renderCollapsibleJson(item, String(i), false);
+      return `<div class="json-entry"><span class="json-index">${i}:</span> ${val}</div>`;
+    }).join('');
+
+    const label = key ? escapeHtml(key) : 'Array';
+    const count = obj.length;
+    return `
+      <div class="json-section${isRoot ? '' : ''}">
+        <div class="json-section-header" onclick="window.toggleJsonSection(this)">
+          <i class="fas fa-chevron-down json-chevron"></i>
+          <span class="json-key">${label}</span>
+          <span class="json-count">[${count} items]</span>
+        </div>
+        <div class="json-section-body">${items}</div>
+      </div>`;
+  }
+
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return `<span class="json-bracket">{}</span>`;
+
+    const items = keys.map(k => {
+      const val = renderCollapsibleJson(obj[k], k, false);
+      return `<div class="json-entry"><span class="json-key">${escapeHtml(k)}:</span> ${val}</div>`;
+    }).join('');
+
+    const label = key ? escapeHtml(key) : 'Object';
+    const count = keys.length;
+    return `
+      <div class="json-section${isRoot ? '' : ''}">
+        <div class="json-section-header" onclick="window.toggleJsonSection(this)">
+          <i class="fas fa-chevron-down json-chevron"></i>
+          <span class="json-key">${label}</span>
+          <span class="json-count">{${count} keys}</span>
+        </div>
+        <div class="json-section-body">${items}</div>
+      </div>`;
+  }
+
+  return `<span>${escapeHtml(String(obj))}</span>`;
+}
+
 // Click handler for contribution grid
 document.addEventListener('click', (e) => {
   const cell = e.target.closest('.day-cell');
@@ -655,6 +776,16 @@ document.addEventListener('mouseout', (e) => {
     if (tooltip) tooltip.classList.remove('visible');
   }
 }, true);
+
+// Escape key closes modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('jsonModal');
+    if (modal && modal.style.display !== 'none') {
+      modal.style.display = 'none';
+    }
+  }
+});
 
 document.addEventListener('mousemove', (e) => {
   const tooltip = document.getElementById('tooltip');
