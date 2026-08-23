@@ -1,5 +1,6 @@
 // API client
 const API_BASE = '/api';
+const UNTAGGED_FILTER = '__untagged__';
 
 async function fetchJSON(url) {
   const res = await fetch(url);
@@ -23,7 +24,11 @@ const state = {
   tooltipLocked: false, // Prevent tooltip from showing after click
   users: [],           // Available user tags
   selectedUser: null,  // Filter by user (null = all)
+  tagToasts: [],       // Independently dismissible/undoable tag operations
 };
+
+let nextToastId = 1;
+const pendingTagChanges = new Set();
 
 // DOM Elements
 let elements = {};
@@ -91,7 +96,11 @@ async function loadConversations(date) {
   render();
 
   try {
-    const result = await fetchJSON(`${API_BASE}/conversations?date=${date}`);
+    let url = `${API_BASE}/conversations?date=${encodeURIComponent(date)}`;
+    if (state.selectedUser) {
+      url += `&user=${encodeURIComponent(state.selectedUser)}`;
+    }
+    const result = await fetchJSON(url);
     state.conversations = result.conversations;
     render();
   } catch (err) {
@@ -132,6 +141,7 @@ function render() {
       <div class="user-filter">
         <select id="userFilter" onchange="window.filterByUser(this.value)">
           <option value="">All users</option>
+          <option value="${UNTAGGED_FILTER}" ${state.selectedUser === UNTAGGED_FILTER ? 'selected' : ''}>Untagged</option>
           ${state.users.map(u => `
             <option value="${escapeHtml(u)}" ${state.selectedUser === u ? 'selected' : ''}>${escapeHtml(u)}</option>
           `).join('')}
@@ -187,6 +197,8 @@ function render() {
       ${renderConversationDetail()}
     </div>
 
+    ${renderTagToasts()}
+
     <div id="jsonModal" class="modal-overlay" style="display:none" onclick="window.closeJsonModal(event)">
       <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -202,6 +214,47 @@ function render() {
       </div>
     </div>
   `;
+}
+
+function renderTagToasts() {
+  if (state.tagToasts.length === 0) return '';
+  return `
+    <div class="toast-stack" aria-live="polite" aria-label="Tagging notifications">
+      ${state.tagToasts.map(toast => `
+        <div class="tag-toast ${toast.closing ? 'closing' : ''}" role="status">
+          <span>Tagged as <strong>${escapeHtml(toast.user)}</strong></span>
+          <button type="button" onclick="window.undoUserTag(${toast.id})" ${toast.undoing ? 'disabled' : ''}>
+            ${toast.undoing ? 'Undoing…' : 'Undo'}
+          </button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function addTagToast(operation) {
+  const toast = { ...operation, id: nextToastId++, undoing: false, closing: false, timer: null };
+  state.tagToasts.push(toast);
+  toast.timer = window.setTimeout(() => dismissTagToast(toast.id), 5000);
+}
+
+function dismissTagToast(id) {
+  const toast = state.tagToasts.find(item => item.id === id);
+  if (!toast) return;
+  window.clearTimeout(toast.timer);
+  toast.closing = true;
+  render();
+  toast.timer = window.setTimeout(() => {
+    state.tagToasts = state.tagToasts.filter(item => item.id !== id);
+    render();
+  }, 180);
+}
+
+async function refreshContributions() {
+  const years = Object.keys(state.allContributions).map(Number);
+  await Promise.all(years.map(loadContribution));
+  const visibleYear = state.selectedYear ?? new Date().getFullYear();
+  state.contribution = state.allContributions[visibleYear];
 }
 
 function getVisibleCount() {
@@ -429,7 +482,9 @@ function renderConversationList() {
       <div class="conversation-meta">
         <span>${c.model || 'unknown'}</span>
         <span>${c.messageCount} messages</span>
-        ${c.userTag ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(c.userTag)}</span>` : ''}
+        ${c.userTag
+          ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(c.userTag)}</span>`
+          : renderQuickUserTagButtons(c.id)}
       </div>
     </div>
   `).join('');
@@ -483,6 +538,7 @@ function renderConversationDetail() {
           <datalist id="userSuggestions">
             ${state.users.map(u => `<option value="${escapeHtml(u)}">`).join('')}
           </datalist>
+          ${!c.userTag ? renderQuickUserTagButtons(c.id) : ''}
           ${c.userTag ? `<button class="user-tag-remove" onclick="window.removeUserTag('${c.id}')" title="Remove user tag">&times;</button>` : ''}
         </div>
         <div class="detail-actions">
@@ -532,7 +588,9 @@ function renderSearchResults() {
       <div class="conversation-meta">
         <span>${r.model || 'unknown'}</span>
         <span>${new Date(r.createTime).toISOString().slice(0, 10)}</span>
-        ${r.userTag ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(r.userTag)}</span>` : ''}
+        ${r.userTag
+          ? `<span class="user-tag-badge"><i class="fas fa-user"></i> ${escapeHtml(r.userTag)}</span>`
+          : renderQuickUserTagButtons(r.id)}
       </div>
     </div>
   `).join('');
@@ -542,6 +600,22 @@ function renderSearchResults() {
       ${header}
       <div class="conversation-list">${items}</div>
     </div>
+  `;
+}
+
+function renderQuickUserTagButtons(convId) {
+  if (state.users.length === 0) return '';
+
+  return `
+    <span class="quick-user-tags" aria-label="Tag conversation">
+      ${state.users.map(user => `
+        <button type="button"
+                class="quick-user-tag"
+                data-user="${escapeHtml(user)}"
+                onclick="event.stopPropagation(); window.setUserTag('${convId}', this.dataset.user)"
+                title="Tag as ${escapeHtml(user)}">${escapeHtml(user)}</button>
+      `).join('')}
+    </span>
   `;
 }
 
@@ -605,9 +679,9 @@ window.selectConversation = (id) => {
   loadConversation(id);
 };
 
-window.doSearch = async () => {
+window.doSearch = async (providedQuery = '') => {
   const input = document.getElementById('searchInput');
-  const query = input?.value?.trim() || '';
+  const query = providedQuery || input?.value?.trim() || '';
   if (!query) return;
 
   state.searchQuery = query;
@@ -616,7 +690,11 @@ window.doSearch = async () => {
   render();
 
   try {
-    const result = await fetchJSON(`${API_BASE}/search?q=${encodeURIComponent(query)}&limit=50`);
+    let url = `${API_BASE}/search?q=${encodeURIComponent(query)}&limit=50`;
+    if (state.selectedUser) {
+      url += `&user=${encodeURIComponent(state.selectedUser)}`;
+    }
+    const result = await fetchJSON(url);
     state.searchResults = result.results;
   } catch (err) {
     console.error('Search failed:', err);
@@ -659,16 +737,23 @@ window.filterByUser = async (user) => {
 
 window.setUserTag = async (convId, value) => {
   const user = value.trim();
-  const current = state.selectedConversation?.userTag || '';
+  const listedConversation = state.conversations.find(c => c.id === convId)
+    || state.searchResults.find(c => c.id === convId);
+  const current = state.selectedConversation?.id === convId
+    ? state.selectedConversation.userTag || ''
+    : listedConversation?.userTag || '';
   if (user === current) return;
+  if (pendingTagChanges.has(convId)) return;
+  pendingTagChanges.add(convId);
 
   try {
     if (user) {
-      await fetch(`${API_BASE}/conversation/${convId}/user-tag`, {
+      const response = await fetch(`${API_BASE}/conversation/${convId}/user-tag`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user }),
       });
+      if (!response.ok) throw new Error(`Failed to tag conversation (${response.status})`);
       if (state.selectedConversation && state.selectedConversation.id === convId) {
         state.selectedConversation.userTag = user;
       }
@@ -681,13 +766,65 @@ window.setUserTag = async (convId, value) => {
     // Update user tag in conversation list too
     const conv = state.conversations.find(c => c.id === convId);
     if (conv) conv.userTag = user || null;
+    const searchResult = state.searchResults.find(c => c.id === convId);
+    if (searchResult) searchResult.userTag = user || null;
+
+    if (user && !current) {
+      addTagToast({ convId, user });
+    }
+
+    if (user && state.selectedUser === UNTAGGED_FILTER) {
+      state.conversations = state.conversations.filter(c => c.id !== convId);
+      state.searchResults = state.searchResults.filter(c => c.id !== convId);
+      if (state.selectedConversation?.id === convId) state.selectedConversation = null;
+    }
+
+    // Show the filtered result and start the toast's visible lifetime immediately.
+    render();
 
     // Refresh users list
-    const users = await fetchJSON(`${API_BASE}/users`);
+    const [users] = await Promise.all([
+      fetchJSON(`${API_BASE}/users`),
+      refreshContributions(),
+    ]);
     state.users = users;
     render();
   } catch (err) {
     console.error('Failed to set user tag:', err);
+  } finally {
+    pendingTagChanges.delete(convId);
+  }
+};
+
+window.undoUserTag = async (toastId) => {
+  const toast = state.tagToasts.find(item => item.id === toastId);
+  if (!toast || toast.undoing) return;
+
+  toast.undoing = true;
+  toast.closing = false;
+  window.clearTimeout(toast.timer);
+  render();
+
+  try {
+    const response = await fetch(`${API_BASE}/conversation/${toast.convId}/user-tag`, { method: 'DELETE' });
+    if (!response.ok) throw new Error(`Failed to undo tag (${response.status})`);
+
+    state.tagToasts = state.tagToasts.filter(item => item.id !== toastId);
+    const usersPromise = fetchJSON(`${API_BASE}/users`);
+    const refreshes = [refreshContributions()];
+    if (state.selectedUser === UNTAGGED_FILTER && state.selectedDate && !state.searchQuery) {
+      refreshes.push(loadConversations(state.selectedDate));
+    } else if (state.selectedUser === UNTAGGED_FILTER && state.searchQuery) {
+      refreshes.push(window.doSearch(state.searchQuery));
+    }
+    const [users] = await Promise.all([usersPromise, ...refreshes]);
+    state.users = users;
+    render();
+  } catch (err) {
+    console.error('Failed to undo user tag:', err);
+    toast.undoing = false;
+    toast.timer = window.setTimeout(() => dismissTagToast(toast.id), 5000);
+    render();
   }
 };
 

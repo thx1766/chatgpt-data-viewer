@@ -16,6 +16,8 @@ import uvicorn
 import minsearch
 import threading
 
+UNTAGGED_FILTER = "__untagged__"
+
 
 # --- Data Models ---
 
@@ -243,7 +245,10 @@ class ConversationService:
             dt = datetime.fromisoformat(date_key)
             if dt.year == year:
                 if user_filter:
-                    count = sum(1 for c in convs if tags.get(c.id) == user_filter)
+                    if user_filter == UNTAGGED_FILTER:
+                        count = sum(1 for c in convs if not tags.get(c.id))
+                    else:
+                        count = sum(1 for c in convs if tags.get(c.id) == user_filter)
                 else:
                     count = len(convs)
                 all_days[date_key] = count
@@ -257,11 +262,15 @@ class ConversationService:
 
         return ContributionResponse(year=year, days=days, max=max_count, total=total)
 
-    def get_conversations_by_date(self, date: str, user_tags: Optional[dict[str, str]] = None) -> ConversationsListResponse:
+    def get_conversations_by_date(self, date: str, user_filter: Optional[str] = None, user_tags: Optional[dict[str, str]] = None) -> ConversationsListResponse:
         convs = self.by_date.get(date, [])
+        tags = user_tags or {}
+        if user_filter == UNTAGGED_FILTER:
+            convs = [c for c in convs if not tags.get(c.id)]
+        elif user_filter:
+            convs = [c for c in convs if tags.get(c.id) == user_filter]
         convs_sorted = sorted(convs, key=lambda c: -c.create_time)
 
-        tags = user_tags or {}
         conversations = [
             {
                 "id": c.id,
@@ -446,8 +455,10 @@ def create_app(data_path: str) -> FastAPI:
         return service.get_contribution(year, user_filter=user, user_tags=tags)
 
     @app.get("/api/conversations")
-    def get_conversations(date: str) -> ConversationsListResponse:
-        return service.get_conversations_by_date(date, user_tags=tag_service.get_all_tags())
+    def get_conversations(date: str, user: Optional[str] = None) -> ConversationsListResponse:
+        return service.get_conversations_by_date(
+            date, user_filter=user, user_tags=tag_service.get_all_tags()
+        )
 
     @app.get("/api/conversation/{conv_id}")
     def get_conversation(conv_id: str) -> ConversationDetailResponse | dict:
@@ -464,9 +475,17 @@ def create_app(data_path: str) -> FastAPI:
         return result
 
     @app.get("/api/search")
-    def search(q: str, limit: int = 20) -> SearchResponse:
-        results = service.search(q, limit)
+    def search(q: str, limit: int = 20, user: Optional[str] = None) -> SearchResponse:
+        # Fetch all matches before applying a tag filter so the requested limit
+        # is filled with matching conversations where possible.
+        search_limit = len(service.conversations) if user else limit
+        results = service.search(q, search_limit)
         tags = tag_service.get_all_tags()
+        if user == UNTAGGED_FILTER:
+            results = [r for r in results if not tags.get(r["id"])]
+        elif user:
+            results = [r for r in results if tags.get(r["id"]) == user]
+        results = results[:limit]
         for r in results:
             r["userTag"] = tags.get(r["id"])
         return SearchResponse(query=q, results=results)
