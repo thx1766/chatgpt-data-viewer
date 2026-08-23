@@ -13,6 +13,10 @@ Browse your ChatGPT conversation history with a GitHub-style contribution graph 
 - Conversation details - View complete message history for any conversation
 - Export to Markdown - Download conversations as `.md` files
 - Dark theme - GitHub-inspired dark UI
+- Responsive mobile UI - On phones (<768px) the app becomes a two-tab experience:
+  - Tag: infinite-scrolling feed of untagged conversations (oldest first) with an expanded preview card and one-tap user tagging
+  - Browse: month-by-month mini calendars, day drill-down, and search, with full-screen conversation view
+- Tablet & desktop keyboard shortcuts - `j`/`k` to move through conversations, `1`-`9` to tag with the Nth user, `x` to untag, `u` to undo, `/` to focus search, `?` for the shortcut overlay
 
 ## Setup
 
@@ -62,6 +66,7 @@ Browse your ChatGPT conversation history with a GitHub-style contribution graph 
 - `GET /api/stats` - Overview statistics
 - `GET /api/contribution?year=2025` - Contribution data for a year
 - `GET /api/conversations?date=2025-01-15` - Conversations for a specific date
+- `GET /api/conversations/untagged?after_time=&after_id=&limit=20` - Untagged conversations (oldest first, cursor-paginated, with message previews)
 - `GET /api/conversation/{id}` - Full conversation with messages
 - `GET /api/search?q=query&limit=20` - Search conversations
 

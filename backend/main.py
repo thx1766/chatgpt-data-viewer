@@ -70,6 +70,12 @@ class SearchResponse(BaseModel):
     results: list[dict]
 
 
+class UntaggedConversationsResponse(BaseModel):
+    conversations: list[dict]
+    remaining: int
+    hasMore: bool
+
+
 class UserTagRequest(BaseModel):
     user: str
 
@@ -287,6 +293,62 @@ class ConversationService:
 
         return ConversationsListResponse(date=date, conversations=conversations)
 
+    def get_untagged_conversations(
+        self,
+        user_tags: dict[str, str],
+        after_time: Optional[float] = None,
+        after_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> UntaggedConversationsResponse:
+        untagged = [c for c in self.conversations if not user_tags.get(c.id)]
+        untagged.sort(key=lambda c: (c.create_time, c.id))
+        remaining = len(untagged)
+
+        if after_time is not None:
+            cursor = (after_time, after_id or "")
+            untagged = [c for c in untagged if (c.create_time, c.id) > cursor]
+
+        page = untagged[:limit]
+        has_more = len(untagged) > limit
+
+        conversations = [
+            {
+                "id": c.id,
+                "title": c.title or "(no title)",
+                "createTime": datetime.fromtimestamp(
+                    c.create_time, tz=timezone.utc
+                ).isoformat(),
+                "createTimestamp": c.create_time,
+                "model": c.model,
+                "messageCount": sum(1 for n in c.mapping.values() if n.get("message")),
+                "preview": self._get_preview(c),
+            }
+            for c in page
+        ]
+
+        return UntaggedConversationsResponse(
+            conversations=conversations, remaining=remaining, hasMore=has_more
+        )
+
+    def _get_preview(self, c: Conversation, max_messages: int = 6, max_chars: int = 500) -> list[dict]:
+        preview = []
+        for m in self._linearize_messages(c.mapping):
+            if m["role"] not in ("user", "assistant"):
+                continue
+            content = (m["content"] or "").strip()
+            if not content:
+                continue
+            truncated = len(content) > max_chars
+            preview.append(
+                {
+                    "role": m["role"],
+                    "content": content[:max_chars] + ("…" if truncated else ""),
+                }
+            )
+            if len(preview) >= max_messages:
+                break
+        return preview
+
     def get_conversation(self, conv_id: str, user_tag: Optional[str] = None) -> Optional[ConversationDetailResponse]:
         c = self.by_id.get(conv_id)
         if not c:
@@ -460,6 +522,19 @@ def create_app(data_path: str) -> FastAPI:
             date, user_filter=user, user_tags=tag_service.get_all_tags()
         )
 
+    @app.get("/api/conversations/untagged")
+    def get_untagged_conversations(
+        after_time: Optional[float] = None,
+        after_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> UntaggedConversationsResponse:
+        return service.get_untagged_conversations(
+            tag_service.get_all_tags(),
+            after_time=after_time,
+            after_id=after_id,
+            limit=min(limit, 100),
+        )
+
     @app.get("/api/conversation/{conv_id}")
     def get_conversation(conv_id: str) -> ConversationDetailResponse | dict:
         result = service.get_conversation(conv_id, user_tag=tag_service.get_tag(conv_id))
@@ -519,5 +594,6 @@ def create_app(data_path: str) -> FastAPI:
 
 
 # Create app instance for uvicorn
-data_path = os.environ.get("CONVERSATIONS_DATA_PATH", "../data")
+default_data_path = str(Path(__file__).parent.parent / "data")
+data_path = os.environ.get("CONVERSATIONS_DATA_PATH", default_data_path)
 app = create_app(data_path)

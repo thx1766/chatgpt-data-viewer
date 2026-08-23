@@ -1,4 +1,6 @@
 :root {
+  --cell: 11px;      /* contribution graph cell size */
+  --cell-gap: 2px;
   --bg: #0d1117;
   --bg-secondary: #161b22;
   --border: #30363d;
@@ -177,17 +179,17 @@ h1 {
 
 .contribution-grid {
   display: grid;
-  grid-template-rows: repeat(7, 11px);
+  grid-template-rows: repeat(7, var(--cell));
   grid-auto-flow: column;
-  gap: 2px;
+  gap: var(--cell-gap);
   align-content: start;
   width: fit-content;
   padding: 4px;
 }
 
 .day-cell {
-  width: 11px;
-  height: 11px;
+  width: var(--cell);
+  height: var(--cell);
   border-radius: 2px;
   background: var(--contrib-0);
   cursor: pointer;
@@ -228,8 +230,8 @@ h1 {
 }
 
 .legend-box {
-  width: 11px;
-  height: 11px;
+  width: var(--cell);
+  height: var(--cell);
   border-radius: 2px;
 }
 
@@ -843,4 +845,735 @@ h1 {
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   Responsive: compact header, keyboard help, touch, phone UI
+   ============================================================ */
+
+body.no-scroll {
+  overflow: hidden;
+}
+
+/* --- Compact desktop/tablet header --- */
+.year-select {
+  display: none;
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  outline: none;
+}
+
+@media (min-width: 768px) and (max-width: 1150px) {
+  header {
+    flex-wrap: wrap;
+  }
+  .year-buttons {
+    display: none;
+  }
+  .year-select {
+    display: inline-block;
+  }
+}
+
+.kbd-help-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.kbd-help-btn:hover {
+  color: var(--accent);
+}
+
+/* --- Keyboard shortcuts overlay --- */
+.kbd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kbd-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 24px 22px;
+  width: min(440px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+.kbd-panel-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 12px;
+}
+
+.kbd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 6px 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+kbd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+/* Number hints on quick-tag buttons (keyboard shortcut discoverability) */
+.tag-num {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-right: 5px;
+}
+
+/* --- Touch ergonomics (any touch-primary device) --- */
+@media (pointer: coarse) {
+  .year-selector button,
+  .search-box button,
+  .user-filter select,
+  .year-select,
+  .modal-btn {
+    min-height: 44px;
+  }
+
+  .search-box input {
+    min-height: 44px;
+    font-size: 16px; /* prevents iOS focus zoom */
+  }
+
+  .conversation-item {
+    padding: 14px 16px;
+  }
+
+  .quick-user-tag {
+    padding: 6px 14px;
+    min-height: 36px;
+  }
+
+  .panel-close,
+  .modal-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .action-link {
+    padding: 8px;
+  }
+
+  .user-tag-input {
+    min-height: 40px;
+    font-size: 16px;
+  }
+
+  .tag-num {
+    display: none; /* keyboard hints are noise on touch-only quick tags */
+  }
+}
+
+/* Bigger contribution cells on touch tablets (labels track via --cell vars) */
+@media (pointer: coarse) and (min-width: 768px) {
+  :root {
+    --cell: 15px;
+    --cell-gap: 3px;
+  }
+}
+
+/* --- Tablet: landscape iPad Pro with keyboard, portrait tablets --- */
+@media (min-width: 768px) and (max-width: 1400px) {
+  #app {
+    padding: 16px;
+  }
+
+  .main-content {
+    grid-template-columns: 320px 1fr;
+  }
+
+  /* Use the full height available instead of the fixed 500px */
+  .conversation-list,
+  .messages {
+    max-height: max(400px, calc(100dvh - 430px));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .main-content {
+    grid-template-columns: 280px 1fr;
+  }
+}
+
+/* ============================================================
+   Phone UI (<768px): app shell, tagging feed, browse, detail
+   ============================================================ */
+
+@media (max-width: 767px) {
+  body {
+    overflow: hidden;
+  }
+
+  #app {
+    max-width: none;
+    padding: 0;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px; /* prevents iOS focus zoom */
+  }
+
+  .toast-stack {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+}
+
+.mobile-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.mobile-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.mobile-header h1 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.feed-remaining {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.feed-remaining:empty {
+  display: none;
+}
+
+.mobile-main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.mobile-view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px;
+}
+
+.mobile-view[hidden] {
+  display: none;
+}
+
+/* --- Bottom navigation --- */
+.bottom-nav {
+  flex: 0 0 auto;
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bottom-nav-btn {
+  flex: 1;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.bottom-nav-btn i {
+  font-size: 1.15rem;
+}
+
+.bottom-nav-btn.active {
+  color: var(--accent);
+}
+
+/* --- Tagging feed --- */
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.feed-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  overflow: hidden;
+  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+}
+
+.feed-card.removing {
+  opacity: 0;
+  transform: translateX(48px);
+}
+
+.feed-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.feed-card-date {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.feed-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.feed-card-tagrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.feed-tag-btn {
+  background: var(--bg);
+  color: #79b8ff;
+  border: 1px solid #1f3a5f;
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.feed-tag-btn:active {
+  background: #1f3a5f;
+}
+
+.feed-tag-new {
+  color: var(--text-muted);
+  border-style: dashed;
+  border-color: var(--border);
+  min-width: 44px;
+}
+
+.feed-tag-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 20px;
+  padding: 8px 16px;
+  min-height: 40px;
+  width: 150px;
+  outline: none;
+}
+
+.feed-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.feed-card-title span {
+  flex: 1;
+  min-width: 0;
+}
+
+.feed-card-title i {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.feed-card-preview {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.preview-msg {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.preview-msg.user {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.preview-msg.assistant {
+  background: var(--bg);
+}
+
+.preview-msg.empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.preview-role {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+/* First card = current conversation: half the screen, scrollable preview */
+.feed-card:first-child {
+  border-color: var(--accent);
+}
+
+.feed-card:first-child .feed-card-preview {
+  height: max(180px, calc(50dvh - 170px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Cards below: compact — clamp to the first message, two lines */
+.feed-card:not(:first-child) .preview-msg:not(:first-of-type) {
+  display: none;
+}
+
+.feed-card:not(:first-child) .preview-msg {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  margin-bottom: 0;
+}
+
+.feed-card:not(:first-child) .preview-role {
+  display: none;
+}
+
+.feed-status {
+  min-height: 40px;
+  padding: 10px 0 20px;
+}
+
+.feed-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 60px 20px;
+  font-size: 1rem;
+}
+
+.feed-empty-icon {
+  font-size: 2.5rem;
+  color: var(--contrib-3);
+  margin-bottom: 12px;
+}
+
+.feed-end {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  padding: 16px 0;
+}
+
+/* --- Browse tab --- */
+.browse-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.browse-search input {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 8px;
+  min-height: 44px;
+  outline: none;
+}
+
+.browse-search input:focus {
+  border-color: var(--accent);
+}
+
+.browse-search-clear {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.browse-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.browse-controls select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 44px;
+  outline: none;
+}
+
+.month-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.month-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 14px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-height: 50px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.month-head i {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  width: 12px;
+}
+
+.month-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  padding: 0 14px 14px;
+}
+
+.month-grid .dow {
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  padding-bottom: 2px;
+}
+
+.mini-day {
+  aspect-ratio: 1;
+  min-height: 38px;
+  border: none;
+  border-radius: 8px;
+  background: var(--contrib-0);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mini-day:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.mini-day.level-1 { background: var(--contrib-1); color: #e6edf3; }
+.mini-day.level-2 { background: var(--contrib-2); color: #e6edf3; }
+.mini-day.level-3 { background: var(--contrib-3); color: #0d1117; font-weight: 600; }
+.mini-day.level-4 { background: var(--contrib-4); color: #0d1117; font-weight: 600; }
+
+.browse-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.browse-subhead-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.browse-subhead-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.mobile-conv-list {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.mobile-conv-list .conversation-item {
+  padding: 14px 16px;
+}
+
+/* --- Full-screen conversation detail --- */
+.mobile-back {
+  min-width: 44px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1.15rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.mobile-detail {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-detail[hidden] {
+  display: none;
+}
+
+.mobile-detail-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  padding-top: calc(8px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+}
+
+.mobile-detail-titlewrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-detail-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-detail-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.mobile-detail-header .action-link {
+  min-width: 40px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-detail-tagrow {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mobile-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: none;
+  padding: 12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+.mobile-messages .message.user {
+  margin-left: 10px;
+}
+
+.mobile-messages .message.assistant {
+  margin-right: 10px;
 }
